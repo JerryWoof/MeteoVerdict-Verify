@@ -173,3 +173,37 @@ def test_old_snapshot_without_blend_still_scores():
     obs = pl.DataFrame({"station_id": [ST] * 30, "variable": ["temperature_2m"] * 30, "valid_time": hours, "obs": [10.0] * 30}).with_columns(pl.col("valid_time").dt.cast_time_unit("us"))
     out = ss.score([frame], obs, [{"id": ST, "name": "Cheb"}], hours[-1])
     assert out["overall"]["temperature_2m|1"]["blend"] is None and not out["overall"]["temperature_2m|1"]["with_blend"]
+
+
+def test_hourly_cloud_and_sunshine_from_hourly_rows():
+    day = datetime(2026, 10, 21, tzinfo=UTC).date()
+    rows = [[ST, "N", "2026-10-21T10:00:00Z", 3.0, "", 5.0], [ST, "N", "2026-10-21T11:00:00Z", 8.0, "", 5.0],
+            [ST, "N", "2026-10-21T12:00:00Z", 2.0, "", 4.0],  # missing (quality 4)
+            [ST, "SSV1H", "2026-10-21T11:00:00Z", 5.0, "", 0.0], [ST, "SSV1H", "2026-10-21T12:00:00Z", 12.0, "", 5.0],
+            [ST, "N", "2026-10-22T00:00:00Z", 1.0, "", 5.0]]  # another day
+    h = fetch_obs.hourly_sky(rows, day)
+    t10, t11, t12 = (datetime(2026, 10, 21, x, tzinfo=UTC) for x in (10, 11, 12))
+    assert h[t10] == {"cloud_cover": 37.5} and h[t11] == {"cloud_cover": 100.0, "sunshine_duration": 1800.0}
+    assert h[t12] == {"sunshine_duration": 3600.0} and len(h) == 3
+
+
+def test_cloud_and_sunshine_scored_and_old_obs_files_still_load(tmp_path):
+    hours = [SNAP + timedelta(hours=24 + i) for i in range(30)]
+    rows = [(m, h, SNAP - timedelta(hours=1 if m in ("ai", "blend") else 12), c, s) for m, c, s in
+            (("ai", 50.0, 1000.0), ("model_a", 70.0, 2000.0)) for h in hours]
+    sm = pl.DataFrame(rows, schema=["model", "valid_time", "run", "cloud_cover", "sunshine_duration"], orient="row").with_columns(
+        pl.lit(ST).alias("station_id"), pl.col("cloud_cover").cast(pl.Float32), pl.col("sunshine_duration").cast(pl.Float32),
+        *[pl.lit(None, pl.Float32).alias(c) for c in ("temperature_2m", "precipitation", "wind_speed_10m", "wind_gusts_10m")])
+    frame = ss.reduce_snapshot(tar_of({"stations_models.parquet": sm}), SNAP, [ST])
+    obs_dir = tmp_path / "obs"
+    obs_dir.mkdir()
+    (obs_dir / "obs-20261020.csv").write_text("station_id,time,temperature_2m,wind_speed_10m,precipitation,wind_gusts_10m\n"
+                                               f"{ST},2026-10-21T00:00:00Z,10.0,2.0,0.0,5.0\n")  # an old file without the new columns
+    lines = ["station_id,time,temperature_2m,wind_speed_10m,precipitation,wind_gusts_10m,cloud_cover,sunshine_duration"]
+    lines += [f"{ST},{h:%Y-%m-%dT%H:%M:%SZ},10.0,2.0,0.0,5.0,60.0,1500.0" for h in hours]
+    (obs_dir / "obs-20261021.csv").write_text("\n".join(lines) + "\n")
+    obs, _ = ss.load_obs(obs_dir)
+    out = ss.score([frame], obs, [{"id": ST, "name": "Cheb"}], hours[-1])
+    c = out["data"][f"{ST}|cloud_cover|1"]
+    assert [x["k"] for x in c["stats"]] == ["ai", "model_a"] and [x["mae"] for x in c["stats"]] == [10.0, 10.0]
+    assert out["data"][f"{ST}|sunshine_duration|1"]["stats"][0]["mae"] == 500.0
