@@ -45,7 +45,7 @@ def row_and_asset(extra=None):
     manifest = json.dumps({"files": {n: {"sha256": s} for n, s in files.items()}}).encode()
     members = {"manifest.json": manifest, "okresy.parquet": okresy, "stations-public.parquet": public_st, **(extra or {})}
     data = tar(members)
-    row = {"snapshot_time": "2026-10-23T00:00:00Z", "content_sha256": h(manifest), "files": files,
+    row = {"snapshot_time": "2026-10-23T00:00:00Z", "content_sha256": "c" * 64, "files": files,
            "public": ["okresy.parquet", "stations-public.parquet"], "withheld": ["obce.parquet", "stations.parquet"],
            "derived": {"stations-public.parquet": {"sha256": h(public_st)}}, "register": None,
            "asset": {"tag": "snap-x", "name": "snap-x.tar", "sha256": h(data), "bytes": len(data)}}

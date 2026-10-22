@@ -11,7 +11,9 @@ What it checks, for every snapshot row of the ledger (``ledger/*.jsonl``):
    equals the hash in the ledger; the village register file in ``register/`` matches. Rows with
    ``policy`` ``public-v1`` publish only the files in ``public``: the files in ``withheld``
    (the villages, MeteoVerdict AI at the stations other than the ČHMÚ synoptic ones) are
-   committed by their sha256 in ``files`` and in ``manifest.json`` but not published;
+   committed by their sha256 in ``files`` and in ``manifest.json`` but not published (in
+   these rows ``manifest.json`` is a public one, listing the file hashes; the stored manifest,
+   with the village details, is withheld and committed by ``content_sha256``);
    ``derived`` gives the hash and rule of a public file cut from a withheld one. Every committed
    file is either public or withheld; ``public_stations`` (version, count, sha256 of the sorted
    ids) matches the fixed list ``register/stations<N>.json`` of that version, and, if pyarrow
@@ -115,7 +117,11 @@ def check_asset(row: dict, repo: str, local_register: Path | None) -> list[str]:
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:
         members = {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
     manifest = members.pop("manifest.json", None)
-    if manifest is None or sha256(manifest) != row["content_sha256"]:
+    if manifest is None:
+        problems.append(f"{t}: the tar has no manifest.json")
+    elif "public" not in row and sha256(manifest) != row["content_sha256"]:
+        # public-v1: manifest.json is the public one (file hashes, no village details); the
+        # stored manifest is withheld, committed by content_sha256
         problems.append(f"{t}: manifest.json does not hash to content_sha256")
     if "public" in row:
         # policy public-v1: the tar has the public files only; each hashes to the ledger
