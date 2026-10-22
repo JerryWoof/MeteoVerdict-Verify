@@ -10,6 +10,12 @@ on:
       day:
         description: "UTC day YYYY-MM-DD (default: yesterday)"
         required: false
+      ledger_dir:
+        description: "ledger folder (default ledger; dry runs: test-ledger)"
+        required: false
+      prefix:
+        description: "release tag prefix (default ledger; dry runs: test-ledger)"
+        required: false
 permissions:
   contents: write
 jobs:
@@ -23,18 +29,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DAY_IN: ${{ github.event.inputs.day }}
+          LEDGER: ${{ github.event.inputs.ledger_dir || 'ledger' }}
+          PREFIX: ${{ github.event.inputs.prefix || 'ledger' }}
         run: |
           day="${DAY_IN:-$(date -u -d yesterday +%F)}"
-          tag="ledger-$day"
-          first=$(ls ledger/*.jsonl 2>/dev/null | head -1 || true)
+          tag="$PREFIX-$day"
+          first=$(ls $LEDGER/*.jsonl 2>/dev/null | head -1 || true)
           if [ -z "$first" ] || [[ "$(basename "$first" .jsonl)" > "$day" ]]; then echo "no ledger up to $day yet, nothing to release"; exit 0; fi
           if gh release view "$tag" >/dev/null 2>&1; then echo "$tag exists"; exit 0; fi
-          python3 scripts/verify_public.py --remote --days 2 --token "$GH_TOKEN"
-          head=$(python3 -c "import json,pathlib;rows=[json.loads(l) for p in sorted(pathlib.Path('ledger').glob('*.jsonl')) if p.stem<='$day' for l in p.read_text().splitlines() if l.strip()];print(rows[-1]['chain_hash'] if rows else '')")
+          python3 scripts/verify_public.py --ledger "$LEDGER" --remote --days 2 --token "$GH_TOKEN"
+          head=$(python3 -c "import json,pathlib;rows=[json.loads(l) for p in sorted(pathlib.Path('$LEDGER').glob('*.jsonl')) if p.stem<='$day' for l in p.read_text().splitlines() if l.strip()];print(rows[-1]['chain_hash'] if rows else '')")
           files=""
-          [ -f "ledger/$day.jsonl" ] && files="ledger/$day.jsonl"
+          [ -f "$LEDGER/$day.jsonl" ] && files="$LEDGER/$day.jsonl"
           printf '%s\n' "$head" > chain-head.txt
-          n=0; [ -f "ledger/$day.jsonl" ] && n=$(wc -l < "ledger/$day.jsonl")
+          n=0; [ -f "$LEDGER/$day.jsonl" ] && n=$(wc -l < "$LEDGER/$day.jsonl")
           gh release create "$tag" --draft --target "$GITHUB_SHA" --title "Ledger $day" \
             --notes "Ledger of $day (UTC): $n snapshot rows. Chain head after this day: $head. Snapshot data: releases snap-${day//-/}T*. How to verify: README.md." $files chain-head.txt
           gh release edit "$tag" --draft=false
