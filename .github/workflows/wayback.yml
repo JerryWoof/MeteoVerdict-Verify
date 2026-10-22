@@ -1,0 +1,23 @@
+name: wayback
+# Weekly: ask the Internet Archive to save the repository page, the ledger and the releases list,
+# an independent third-party copy. Failures do not fail the workflow (the archive is sometimes busy).
+on:
+  schedule:
+    - cron: "50 4 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  wayback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Save pages
+        run: |
+          base="https://github.com/${{ github.repository }}"
+          raw="https://raw.githubusercontent.com/${{ github.repository }}/main"
+          for u in "$base" "$base/releases" "$base/tree/main/ledger" "$raw/README.md" \
+                   "https://api.github.com/repos/${{ github.repository }}/releases?per_page=100"; do
+            echo "== $u"
+            curl -sS -m 120 -o /dev/null -w "%{http_code}\n" "https://web.archive.org/save/$u" || echo "failed"
+            sleep 20
+          done

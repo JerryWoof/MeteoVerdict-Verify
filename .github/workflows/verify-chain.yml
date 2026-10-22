@@ -1,0 +1,19 @@
+name: verify-chain
+# Recomputes the hash chain of the whole ledger on every push and daily; fails on any mismatch.
+# On a push it also compares GitHub's digest of each new snapshot's release asset with the ledger.
+on:
+  push:
+    branches: [main]
+    paths: ["ledger/**", "scripts/verify_public.py", ".github/workflows/verify-chain.yml"]
+  schedule:
+    - cron: "40 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Chain of the whole ledger, asset digests of the last 2 days
+        run: python3 scripts/verify_public.py --remote --days 2 --token "${{ secrets.GITHUB_TOKEN }}"

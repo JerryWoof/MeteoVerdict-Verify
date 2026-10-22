@@ -1,0 +1,52 @@
+name: stamp
+# OpenTimestamps: after every ledger push, the newest chain hash is written to stamps/<time>.head
+# and stamped (stamps/<time>.head.ots, first pending, a Bitcoin attestation after some hours).
+# Every 6 hours the pending proofs are upgraded. The chain hash covers every earlier row, so one
+# stamp per snapshot dates the whole history before it.
+on:
+  workflow_run:
+    workflows: [verify-chain]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "20 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: stamp
+  cancel-in-progress: false
+jobs:
+  stamp:
+    # only after a passing chain check; the schedule and manual runs do the upgrade below
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - run: pip install opentimestamps-client==0.7.2
+      - name: Stamp the newest chain hash
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          rows = [json.loads(l) for p in sorted(pathlib.Path("ledger").glob("*.jsonl")) for l in p.read_text().splitlines() if l.strip()]
+          if rows:
+              r = rows[-1]
+              name = r["snapshot_time"].replace(":", "").replace("-", "")
+              out = pathlib.Path("stamps") / f"{name}.head"
+              if not out.exists():
+                  out.write_text(f"{r['chain_hash']}\n{r['snapshot_time']}\n")
+          PY
+          for f in stamps/*.head; do [ -e "$f" ] && [ ! -e "$f.ots" ] && ots stamp "$f"; done
+          true
+      - name: Upgrade pending proofs
+        run: |
+          for f in stamps/*.ots; do [ -e "$f" ] && ots upgrade "$f" || true; done
+          rm -f stamps/*.ots.bak
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stamps
+          git diff --cached --quiet || { git commit -m "stamps: OpenTimestamps proofs"; git pull --rebase -q origin main && git push origin HEAD:main; }
