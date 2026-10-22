@@ -309,7 +309,7 @@ def main() -> int:
             "stations": {"file": "register/stations40.json", "sha256": sha256_file(args.stations), "n": len(stations)},
             "script": {"version": VERSION, "sha256": sha256_file(me), "polars": pl.__version__},
             "rules": "preregistration/v1.md R1-R5; leads D+k = [24k, 24k+24) h; common pairs; no filling",
-            "command": "python3 scripts/score_stations.py" + (f" --ledger {args.ledger}" if str(args.ledger) != "ledger" else ""),
+            "command": "python3 scripts/score_stations.py" + (f" --ledger {args.ledger.name}" if args.ledger.name != "ledger" else ""),
         },
     }  # fmt: skip
     args.out.parent.mkdir(parents=True, exist_ok=True)
