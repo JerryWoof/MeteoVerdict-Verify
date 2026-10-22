@@ -8,7 +8,11 @@ What it checks, for every snapshot row of the ledger (``ledger/*.jsonl``):
    snapshot times only go forward. A changed, inserted or deleted row breaks the chain.
 2. with ``--download``: the release asset of each snapshot (a tar) is downloaded and its sha256
    equals the ledger's; ``manifest.json`` inside hashes to ``content_sha256``; every file inside
-   equals the hash in the ledger; the village register file in ``register/`` matches.
+   equals the hash in the ledger; the village register file in ``register/`` matches. Rows with
+   ``policy`` ``public-v1`` publish only the files in ``public``: the files in ``withheld``
+   (the villages, MeteoVerdict AI at the stations other than the ČHMÚ synoptic ones) are
+   committed by their sha256 in ``files`` and in ``manifest.json`` but not published;
+   ``derived`` gives the hash and rule of a public file cut from a withheld one.
 3. with ``--remote``: GitHub's own digest of each release asset equals the ledger's.
 4. it lists the missing snapshots (the outage log): a snapshot time without an issue at most
    6 hours old is written as ``missing`` and counted, never filled in afterwards.
@@ -109,7 +113,19 @@ def check_asset(row: dict, repo: str, local_register: Path | None) -> list[str]:
     manifest = members.pop("manifest.json", None)
     if manifest is None or sha256(manifest) != row["content_sha256"]:
         problems.append(f"{t}: manifest.json does not hash to content_sha256")
-    if {n: sha256(b) for n, b in members.items()} != row["files"]:
+    if "public" in row:
+        # policy public-v1: the tar has the public files only; each hashes to the ledger
+        # (the store's hash, or ``derived`` for a file cut from a withheld one); the withheld
+        # files are committed by their hash in ``files`` and are not published
+        want = {n: row["files"].get(n) or (row.get("derived", {}).get(n) or {}).get("sha256") for n in row["public"]}
+        if {n: sha256(b) for n, b in members.items()} != want:
+            problems.append(f"{t}: public files in the tar differ from the hashes in the ledger")
+        if set(members) & set(row.get("withheld", [])):
+            problems.append(f"{t}: a withheld file is in the tar")
+        listed = json.loads(manifest)["files"] if manifest else {}
+        if {n: i["sha256"] for n, i in listed.items()} != row["files"]:
+            problems.append(f"{t}: manifest.json does not list the ledger's file hashes")
+    elif {n: sha256(b) for n, b in members.items()} != row["files"]:
         problems.append(f"{t}: files in the tar differ from the hashes in the ledger")
     reg = row.get("register")
     if reg:
