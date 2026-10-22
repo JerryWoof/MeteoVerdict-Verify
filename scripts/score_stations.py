@@ -209,8 +209,23 @@ def load_snapshots(rows: list[dict], stations: list[str], snap_dir: Path | None,
     return frames
 
 
+def obs_files(folder: Path) -> tuple[list[Path], dict[str, str]]:
+    """One file per day: the newest checked one (``obs-YYYYMMDD.final*.csv``) if there is one, else the
+    provisional file; and the quality of each day (rule R5)."""
+    by_day: dict[str, list[Path]] = {}
+    for f in folder.glob("obs-*.csv"):
+        by_day.setdefault(f.name[4:12], []).append(f)
+    files, quality = [], {}
+    for day in sorted(by_day):
+        fin = sorted((p for p in by_day[day] if ".final" in p.name), key=lambda p: (len(p.name), p.name))
+        pick = fin[-1] if fin else next(p for p in by_day[day] if ".final" not in p.name)
+        files.append(pick)
+        quality[day] = "final" if fin else "provisional"
+    return files, quality
+
+
 def load_obs(folder: Path) -> tuple[pl.DataFrame, list[str]]:
-    files = sorted(folder.glob("obs-*.csv"))
+    files, _ = obs_files(folder)
     # days frozen before the cloud and sunshine columns existed simply lack them
     frames = [pl.read_csv(f, schema_overrides={v: pl.Float64 for v in OBS_COLUMNS if v in f.read_text().split("\n", 1)[0]})
               for f in files]  # fmt: skip
@@ -395,7 +410,9 @@ def main() -> int:
             "chain_head": ledger[-1]["chain_hash"] if ledger else None,
             "obs": {"files": len(sums), "first": sums[0].split("obs-")[1][:8] if sums else None,
                     "last": sums[-1].split("obs-")[1][:8] if sums else None,
-                    "sums_sha256": vp.sha256("\n".join(sums).encode()), "quality": "provisional (ČHMÚ now/, unchecked)",
+                    "sums_sha256": vp.sha256("\n".join(sums).encode()),
+                    "days": obs_files(args.obs)[1],
+                    "quality": "per day: provisional (ČHMÚ now/, unchecked) or final (ČHMÚ recent/, checked); see days",
                     "source": "https://opendata.chmi.cz/meteorology/climate/"},
             "stations": {"file": "register/stations40.json", "sha256": sha256_file(args.stations), "n": len(stations)},
             "script": {"version": VERSION, "sha256": sha256_file(me), "polars": pl.__version__},
