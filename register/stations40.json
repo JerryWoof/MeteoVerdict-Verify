@@ -1,0 +1,326 @@
+{
+ "version": 1,
+ "description": "The 40 main CHMI stations (WMO ids 0-20000-0-*) among the 297 stations of the MeteoVerdict AI. Fixed list (rule R4); a change is a new version.",
+ "stations": [
+  {
+   "id": "0-20000-0-11723",
+   "name": "Brno, Tuřany",
+   "lat": 49.1531,
+   "lon": 16.6889,
+   "elev": 241,
+   "okres": "Brno-město"
+  },
+  {
+   "id": "0-20000-0-11406",
+   "name": "Cheb",
+   "lat": 50.0683,
+   "lon": 12.3914,
+   "elev": 483,
+   "okres": "Cheb"
+  },
+  {
+   "id": "0-20000-0-11457",
+   "name": "Churáňov",
+   "lat": 49.0683,
+   "lon": 13.6153,
+   "elev": 1118,
+   "okres": "Prachatice"
+  },
+  {
+   "id": "0-20000-0-11509",
+   "name": "Doksany",
+   "lat": 50.4589,
+   "lon": 14.17,
+   "elev": 158,
+   "okres": "Litoměřice"
+  },
+  {
+   "id": "0-20000-0-11693",
+   "name": "Dukovany",
+   "lat": 49.0956,
+   "lon": 16.1344,
+   "elev": 400,
+   "okres": "Třebíč"
+  },
+  {
+   "id": "0-20000-0-11774",
+   "name": "Holešov",
+   "lat": 49.3206,
+   "lon": 17.57,
+   "elev": 222,
+   "okres": "Kroměříž"
+  },
+  {
+   "id": "0-20000-0-11791",
+   "name": "Hošťálková, Maruška",
+   "lat": 49.3653,
+   "lon": 17.8286,
+   "elev": 664,
+   "okres": "Vsetín"
+  },
+  {
+   "id": "0-20000-0-11609",
+   "name": "Jičín",
+   "lat": 50.4395,
+   "lon": 15.3526,
+   "elev": 283,
+   "okres": "Jičín"
+  },
+  {
+   "id": "0-20000-0-11414",
+   "name": "Karlovy Vary, Olšová Vrata",
+   "lat": 50.2017,
+   "lon": 12.9142,
+   "elev": 603,
+   "okres": "Karlovy Vary"
+  },
+  {
+   "id": "0-20000-0-11487",
+   "name": "Kocelovice",
+   "lat": 49.4672,
+   "lon": 13.8386,
+   "elev": 519,
+   "okres": "Strakonice"
+  },
+  {
+   "id": "0-20000-0-11433",
+   "name": "Kopisty",
+   "lat": 50.5442,
+   "lon": 13.6228,
+   "elev": 240,
+   "okres": "Most"
+  },
+  {
+   "id": "0-20000-0-11636",
+   "name": "Kostelní Myslová",
+   "lat": 49.1592,
+   "lon": 15.4392,
+   "elev": 569,
+   "okres": "Jihlava"
+  },
+  {
+   "id": "0-20000-0-11628",
+   "name": "Košetice, Křešín, Kramolín",
+   "lat": 49.5735,
+   "lon": 15.0805,
+   "elev": 532,
+   "okres": "Pelhřimov"
+  },
+  {
+   "id": "0-20000-0-11698",
+   "name": "Kuchařovice",
+   "lat": 48.8811,
+   "lon": 16.0853,
+   "elev": 334,
+   "okres": "Znojmo"
+  },
+  {
+   "id": "0-20000-0-11603",
+   "name": "Liberec",
+   "lat": 50.7697,
+   "lon": 15.0239,
+   "elev": 398,
+   "okres": "Liberec"
+  },
+  {
+   "id": "0-20000-0-11710",
+   "name": "Luká",
+   "lat": 49.6522,
+   "lon": 16.9533,
+   "elev": 510,
+   "okres": "Olomouc"
+  },
+  {
+   "id": "0-20000-0-11787",
+   "name": "Lysá hora",
+   "lat": 49.5461,
+   "lon": 18.4475,
+   "elev": 1322,
+   "okres": "Frýdek-Místek"
+  },
+  {
+   "id": "0-20000-0-11464",
+   "name": "Milešovka",
+   "lat": 50.555,
+   "lon": 13.9308,
+   "elev": 830,
+   "okres": "Litoměřice"
+  },
+  {
+   "id": "0-20000-0-11782",
+   "name": "Mošnov",
+   "lat": 49.6919,
+   "lon": 18.1128,
+   "elev": 253,
+   "okres": "Nový Jičín"
+  },
+  {
+   "id": "0-20000-0-11652",
+   "name": "Pardubice, letiště",
+   "lat": 50.0161,
+   "lon": 15.7403,
+   "elev": 224,
+   "okres": "Pardubice"
+  },
+  {
+   "id": "0-20000-0-11643",
+   "name": "Pec pod Sněžkou",
+   "lat": 50.6919,
+   "lon": 15.7289,
+   "elev": 816,
+   "okres": "Trutnov"
+  },
+  {
+   "id": "0-20000-0-11450",
+   "name": "Plzeň, Mikulka",
+   "lat": 49.7647,
+   "lon": 13.3789,
+   "elev": 360,
+   "okres": "Plzeň-město"
+  },
+  {
+   "id": "0-20000-0-11669",
+   "name": "Polom, Sedloňov",
+   "lat": 50.3503,
+   "lon": 16.3222,
+   "elev": 747,
+   "okres": "Rychnov nad Kněžnou"
+  },
+  {
+   "id": "0-20000-0-11519",
+   "name": "Praha, Karlov",
+   "lat": 50.0692,
+   "lon": 14.4278,
+   "elev": 260,
+   "okres": "území Hlavního města Prahy"
+  },
+  {
+   "id": "0-20000-0-11567",
+   "name": "Praha, Kbely",
+   "lat": 50.1233,
+   "lon": 14.5381,
+   "elev": 284,
+   "okres": "území Hlavního města Prahy"
+  },
+  {
+   "id": "0-20000-0-11520",
+   "name": "Praha, Libuš",
+   "lat": 50.0078,
+   "lon": 14.4469,
+   "elev": 302,
+   "okres": "území Hlavního města Prahy"
+  },
+  {
+   "id": "0-20000-0-11518",
+   "name": "Praha, Ruzyně",
+   "lat": 50.1003,
+   "lon": 14.2556,
+   "elev": 364,
+   "okres": "Praha-západ"
+  },
+  {
+   "id": "0-20000-0-11747",
+   "name": "Prostějov",
+   "lat": 49.4525,
+   "lon": 17.1347,
+   "elev": 215,
+   "okres": "Prostějov"
+  },
+  {
+   "id": "0-20000-0-11659",
+   "name": "Přibyslav, Hřiště",
+   "lat": 49.5828,
+   "lon": 15.7625,
+   "elev": 532,
+   "okres": "Havlíčkův Brod"
+  },
+  {
+   "id": "0-20000-0-11423",
+   "name": "Přimda",
+   "lat": 49.6694,
+   "lon": 12.6781,
+   "elev": 743,
+   "okres": "Tachov"
+  },
+  {
+   "id": "0-20000-0-11692",
+   "name": "Sedlec",
+   "lat": 49.1708,
+   "lon": 16.1206,
+   "elev": 474,
+   "okres": "Třebíč"
+  },
+  {
+   "id": "0-20000-0-11653",
+   "name": "Sněžka, Poštovna",
+   "lat": 50.7358,
+   "lon": 15.7403,
+   "elev": 1602,
+   "okres": "Trutnov"
+  },
+  {
+   "id": "0-20000-0-11683",
+   "name": "Svratouch",
+   "lat": 49.735,
+   "lon": 16.0342,
+   "elev": 734,
+   "okres": "Chrudim"
+  },
+  {
+   "id": "0-20000-0-11538",
+   "name": "Temelín",
+   "lat": 49.1978,
+   "lon": 14.3422,
+   "elev": 500,
+   "okres": "České Budějovice"
+  },
+  {
+   "id": "0-20000-0-11438",
+   "name": "Tušimice",
+   "lat": 50.3767,
+   "lon": 13.3281,
+   "elev": 322,
+   "okres": "Chomutov"
+  },
+  {
+   "id": "0-20000-0-11502",
+   "name": "Ústí nad Labem, Kočkov",
+   "lat": 50.6833,
+   "lon": 14.0411,
+   "elev": 375,
+   "okres": "Ústí nad Labem"
+  },
+  {
+   "id": "0-20000-0-11679",
+   "name": "Ústí nad Orlicí",
+   "lat": 49.9803,
+   "lon": 16.4222,
+   "elev": 402,
+   "okres": "Ústí nad Orlicí"
+  },
+  {
+   "id": "0-20000-0-11766",
+   "name": "Červená",
+   "lat": 49.7772,
+   "lon": 17.5419,
+   "elev": 748,
+   "okres": "Opava"
+  },
+  {
+   "id": "0-20000-0-11546",
+   "name": "České Budějovice,Rožnov",
+   "lat": 48.9519,
+   "lon": 14.4697,
+   "elev": 395,
+   "okres": "České Budějovice"
+  },
+  {
+   "id": "0-20000-0-11730",
+   "name": "Šerák",
+   "lat": 50.1875,
+   "lon": 17.1083,
+   "elev": 1328,
+   "okres": "Jeseník"
+  }
+ ]
+}

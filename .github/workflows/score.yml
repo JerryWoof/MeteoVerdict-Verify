@@ -1,0 +1,59 @@
+name: score
+# Recomputes derived/stations.json (the verification page's data) from the public material only:
+# ledger -> snapshot assets (sha256 checked against the ledger), frozen observations, station list.
+# Runs after every ledger push, after each daily observation freeze, daily, and on demand. The result
+# is force-pushed as ONE commit to the branch `derived` (history does not accumulate); anyone can
+# reproduce it with `python3 scripts/score_stations.py` and compare the numbers.
+on:
+  push:
+    branches: [main]
+    paths: ["ledger/**", "obs/**", "register/stations40.json", "scripts/score_stations.py", "scripts/verify_public.py", ".github/workflows/score.yml"]
+  schedule:
+    - cron: "50 5 * * *"
+  workflow_dispatch:
+    inputs:
+      fresh:
+        description: "ignore the cache (download and recompute every snapshot)"
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: score
+  cancel-in-progress: false
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install polars==2.0.0
+      - uses: actions/cache@v4
+        if: ${{ !inputs.fresh }}
+        with:
+          path: cache
+          key: score-cache-${{ github.run_id }}
+          restore-keys: score-cache-
+      - name: Chain, snapshots, scores
+        run: |
+          python3 scripts/verify_public.py
+          python3 scripts/score_stations.py --cache cache --out derived/stations.json
+          ls -la derived
+      - name: Publish to the branch derived (one commit, replaced every time)
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          pub=$(mktemp -d)
+          cp derived/stations.json "$pub/"
+          cd "$pub"
+          git init -q -b derived
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stations.json
+          git commit -q -m "derived/stations.json from main@${GITHUB_SHA::8}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" derived
