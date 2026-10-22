@@ -61,9 +61,10 @@ def get_json(url: str) -> dict | None:
     return None
 
 
-def day_rows(wsi: str, day: date, today: date) -> tuple[list[list], str]:
-    """The 10-minute rows of ``day`` and where they came from (``now`` or ``recent``)."""
-    if (today - day).days <= 3:
+def day_rows(wsi: str, day: date, today: date, checked_only: bool = False) -> tuple[list[list], str]:
+    """The 10-minute rows of ``day`` and where they came from (``now`` or ``recent``);
+    ``checked_only`` skips ``now/`` (unchecked) and takes the monthly ``recent/`` file only."""
+    if (today - day).days <= 3 and not checked_only:
         doc = get_json(f"{BASE}/now/data/10m-{wsi}-{day:%Y%m%d}.json")
         if doc:
             return doc["data"]["data"]["values"], "now"
@@ -74,9 +75,9 @@ def day_rows(wsi: str, day: date, today: date) -> tuple[list[list], str]:
     return [], "none"
 
 
-def day_rows_1h(wsi: str, day: date, today: date) -> list[list]:
+def day_rows_1h(wsi: str, day: date, today: date, checked_only: bool = False) -> list[list]:
     """The hourly rows (elements N, SSV1H, ...) of ``day``: ``now/`` for the last days, else the monthly file."""
-    if (today - day).days <= 3:
+    if (today - day).days <= 3 and not checked_only:
         doc = get_json(f"{BASE}/now/data/1h-{wsi}-{day:%Y%m%d}.json")
         if doc:
             return doc["data"]["data"]["values"]
@@ -131,12 +132,12 @@ def hourly(rows: list[list], day: date) -> dict[datetime, dict[str, float]]:
     return out
 
 
-def fetch_day(stations: list[str], day: date, today: date) -> tuple[dict[str, dict], dict[str, str]]:
+def fetch_day(stations: list[str], day: date, today: date, checked_only: bool = False) -> tuple[dict[str, dict], dict[str, str]]:
     def one(wsi: str):
-        before, s1 = day_rows(wsi, day - timedelta(days=1), today)
-        now, s2 = day_rows(wsi, day, today)
+        before, s1 = day_rows(wsi, day - timedelta(days=1), today, checked_only)
+        now, s2 = day_rows(wsi, day, today, checked_only)
         cells = hourly(before + now, day)
-        for t, extra in hourly_sky(day_rows_1h(wsi, day, today), day).items():
+        for t, extra in hourly_sky(day_rows_1h(wsi, day, today, checked_only), day).items():
             cells.setdefault(t, {}).update(extra)
         return wsi, cells, s2
 
@@ -159,8 +160,46 @@ def to_csv(stations: list[str], hours: dict[str, dict]) -> bytes:
 
 def update_sums(folder: Path) -> None:
     """``obs/SHA256SUMS`` (``sha256sum -c`` format) of every frozen day, sorted by name."""
-    lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(folder.glob("obs-*.csv"))]
+    lines = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(folder.glob("obs-*.csv"))]  # incl. .final
     (folder / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+
+
+def final_versions(out: Path, day: date) -> list[Path]:
+    """The checked files of ``day``, oldest first: ``.final``, ``.final2``, ``.final3``, ..."""
+    stem = f"obs-{day:%Y%m%d}"
+    found = [p for p in out.glob(f"{stem}.final*.csv")]
+    return sorted(found, key=lambda p: (len(p.name), p.name))
+
+
+def final_day(args, day: date, today: date) -> int:
+    """Freeze the checked values of a day (rule R5: provisional until checked). The provisional file
+    stays untouched (the first scores cite its hash); an existing checked file is never overwritten:
+    if the checked values changed later, the next number is used (``.final2``). Exit 2: not published
+    in ``recent/`` yet (try again later)."""
+    if not (args.out / f"obs-{day:%Y%m%d}.csv").exists():
+        print("no provisional file for this day: freeze it first (without --final)", file=sys.stderr)
+        return 2
+    ids = [s["id"] for s in json.loads(args.stations.read_text())["stations"]]
+    probe, source = day_rows(ids[0], day, today, checked_only=True)
+    if not probe:
+        print("ČHMÚ recent/ does not have this day yet; nothing written", file=sys.stderr)
+        return 2
+    hours, source = fetch_day(ids, day, today, checked_only=True)
+    good = sum(1 for w in ids if sum(1 for c in hours[w].values() if "temperature_2m" in c) >= 20)
+    print(f"{good}/{len(ids)} stations with checked temperature in at least 20 hours")
+    if good < 35:
+        print("too few stations in recent/: nothing written", file=sys.stderr)
+        return 2
+    data = to_csv(ids, hours)
+    have = final_versions(args.out, day)
+    if have and have[-1].read_bytes() == data:
+        print(f"{have[-1].name} is up to date")
+        return 0
+    name = f"obs-{day:%Y%m%d}.final.csv" if not have else f"obs-{day:%Y%m%d}.final{len(have) + 1}.csv"
+    (args.out / name).write_bytes(data)
+    update_sums(args.out)
+    print(f"{args.out / name}: {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}")
+    return 0
 
 
 def main() -> int:
@@ -168,6 +207,8 @@ def main() -> int:
     ap.add_argument("--day", required=True, help="UTC day YYYY-MM-DD (a complete, finished day)")
     ap.add_argument("--stations", type=Path, default=Path("register/stations40.json"))
     ap.add_argument("--out", type=Path, default=Path("obs"))
+    ap.add_argument("--final", action="store_true", help="the checked version of a day already frozen provisionally: values from "
+                    "ČHMÚ recent/ (checked) as obs-YYYYMMDD.final.csv (a later change of a checked value: .final2.csv, ...)")
     ap.add_argument("--partial", action="store_true", help="tests only: take a day still in progress (needs --out other than obs)")
     args = ap.parse_args()
     if args.partial and args.out.name == "obs":
@@ -178,6 +219,8 @@ def main() -> int:
     if day >= today and not args.partial:
         print("the day is not finished yet", file=sys.stderr)
         return 2
+    if args.final:
+        return final_day(args, day, today)
     path = args.out / f"obs-{day:%Y%m%d}.csv"
     if path.exists():
         print(f"{path} is frozen already (sha256 {hashlib.sha256(path.read_bytes()).hexdigest()[:16]}…)")

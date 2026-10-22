@@ -2,7 +2,10 @@ name: obs
 # Freezes yesterday's hourly ČHMÚ observations of the 40 main stations as obs/obs-YYYYMMDD.csv
 # (scripts/fetch_obs.py, public ČHMÚ open data) and adds its line to obs/SHA256SUMS. A frozen day is
 # never overwritten. Runs at 02:20 and again at 05:20 UTC (if ČHMÚ published late); a day that is not
-# complete yet is skipped and retried by the next run.
+# complete yet is skipped and retried by the next run. Days 4-90 days old that have no checked file yet
+# get one (obs-YYYYMMDD.final.csv, ČHMÚ recent/, rule R5) as soon as ČHMÚ has published it; the
+# provisional file stays as it is. An existing checked file is not re-checked here (run
+# `fetch_obs.py --day D --final` by hand to add a .final2 if checked values changed).
 on:
   schedule:
     - cron: "20 2,5 * * *"
@@ -29,12 +32,23 @@ jobs:
         run: |
           day="${DAY_IN:-$(date -u -d yesterday +%F)}"
           python3 scripts/fetch_obs.py --day "$day" || [ $? -eq 2 ]
+      - name: Checked versions of earlier days
+        run: |
+          today=$(date -u +%F)
+          for f in obs/obs-2*.csv; do
+            case "$f" in *.final*) continue;; esac
+            d=$(basename "$f" .csv | cut -c5-12); day="${d:0:4}-${d:4:2}-${d:6:2}"
+            ls obs/obs-$d.final*.csv >/dev/null 2>&1 && continue
+            age=$(( ( $(date -u -d "$today" +%s) - $(date -u -d "$day" +%s) ) / 86400 ))
+            [ "$age" -ge 4 ] && [ "$age" -le 90 ] || continue
+            python3 scripts/fetch_obs.py --day "$day" --final || [ $? -eq 2 ]
+          done
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add obs
           if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
-          git commit -q -m "obs: freeze $(git diff --cached --name-only | grep -o 'obs-[0-9]*' | head -1)"
+          git commit -q -m "obs: $(git diff --cached --name-only | sed 's#obs/##' | grep -v SHA256SUMS | tr '\n' ' ')"
           for i in 1 2 3; do git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0; sleep 5; done
           exit 1

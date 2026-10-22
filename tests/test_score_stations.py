@@ -207,3 +207,57 @@ def test_cloud_and_sunshine_scored_and_old_obs_files_still_load(tmp_path):
     c = out["data"][f"{ST}|cloud_cover|1"]
     assert [x["k"] for x in c["stats"]] == ["ai", "model_a"] and [x["mae"] for x in c["stats"]] == [10.0, 10.0]
     assert out["data"][f"{ST}|sunshine_duration|1"]["stats"][0]["mae"] == 500.0
+
+
+def _obs_csv(path, value):
+    day = path.name[4:12]  # the file's own day, as the real files have
+    path.write_text(f"station_id,time,temperature_2m\n{ST},{day[:4]}-{day[4:6]}-{day[6:8]}T00:00:00Z,{value}\n")
+
+
+def test_checked_file_is_preferred_per_day_and_labelled(tmp_path):
+    obs = tmp_path / "obs"
+    obs.mkdir()
+    _obs_csv(obs / "obs-20261020.csv", 1.0)
+    _obs_csv(obs / "obs-20261021.csv", 2.0)
+    _obs_csv(obs / "obs-20261021.final.csv", 3.0)
+    _obs_csv(obs / "obs-20261021.final2.csv", 4.0)
+    files, quality = ss.obs_files(obs)
+    assert [f.name for f in files] == ["obs-20261020.csv", "obs-20261021.final2.csv"]
+    assert quality == {"20261020": "provisional", "20261021": "final"}
+    frame, sums = ss.load_obs(obs)
+    assert frame.filter(frame["valid_time"] == datetime(2026, 10, 21, tzinfo=timezone.utc))["obs"].to_list() == [4.0]
+    assert len(sums) == 2
+
+
+def test_final_day_never_overwrites_and_versions_changes(tmp_path, monkeypatch):
+    import argparse
+
+    obs = tmp_path / "obs"
+    obs.mkdir()
+    stations = tmp_path / "stations.json"
+    stations.write_text(json.dumps({"stations": [{"id": ST}]}))
+    args = argparse.Namespace(out=obs, stations=stations)
+    day = date(2026, 10, 21)
+    today = date(2026, 11, 30)
+    assert fetch_obs.final_day(args, day, today) == 2  # no provisional file yet
+    _obs_csv(obs / "obs-20261021.csv", 2.0)
+    monkeypatch.setattr(fetch_obs, "day_rows", lambda *a, **k: ([], "none"))
+    assert fetch_obs.final_day(args, day, today) == 2  # recent/ has not got the day
+    value = {"v": 3.0}
+    monkeypatch.setattr(fetch_obs, "day_rows", lambda *a, **k: ([["x"]], "recent"))
+    cell = lambda: {datetime(2026, 10, 21, h, tzinfo=timezone.utc): {"temperature_2m": value["v"]} for h in range(24)}  # noqa: E731
+    monkeypatch.setattr(fetch_obs, "fetch_day", lambda ids, d, t, checked_only=False: ({ST: cell()}, {ST: "recent"}))
+    monkeypatch.setattr(fetch_obs, "to_csv", lambda ids, hours: f"v={value['v']}\n".encode())
+    assert fetch_obs.final_day(args, day, today) == 2  # fewer than 35 stations: nothing written
+    monkeypatch.setattr(fetch_obs, "final_day", fetch_obs.final_day)
+    # one station only: lower the bar through a 1-station register to exercise the writing path
+    monkeypatch.setattr(fetch_obs, "fetch_day", lambda ids, d, t, checked_only=False: ({i: cell() for i in ids}, {}))
+    stations.write_text(json.dumps({"stations": [{"id": f"S{i}"} for i in range(40)]}))
+    assert fetch_obs.final_day(args, day, today) == 0
+    assert (obs / "obs-20261021.final.csv").read_text() == "v=3.0\n"
+    assert (obs / "obs-20261021.csv").read_text().endswith("2.0\n")  # provisional untouched
+    assert fetch_obs.final_day(args, day, today) == 0 and not (obs / "obs-20261021.final2.csv").exists()
+    value["v"] = 3.5  # checked value changed later
+    assert fetch_obs.final_day(args, day, today) == 0
+    assert (obs / "obs-20261021.final.csv").read_text() == "v=3.0\n" and (obs / "obs-20261021.final2.csv").read_text() == "v=3.5\n"
+    assert "obs-20261021.final2.csv" in (obs / "SHA256SUMS").read_text()
