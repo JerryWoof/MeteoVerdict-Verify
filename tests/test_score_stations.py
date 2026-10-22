@@ -261,3 +261,24 @@ def test_final_day_never_overwrites_and_versions_changes(tmp_path, monkeypatch):
     assert fetch_obs.final_day(args, day, today) == 0
     assert (obs / "obs-20261021.final.csv").read_text() == "v=3.0\n" and (obs / "obs-20261021.final2.csv").read_text() == "v=3.5\n"
     assert "obs-20261021.final2.csv" in (obs / "SHA256SUMS").read_text()
+
+
+def test_r1_uses_measured_availability_and_falls_back_to_the_delay_table():
+    snap = datetime(2026, 10, 22, 12, tzinfo=timezone.utc)
+
+    def row(series, run_h, avail_h):
+        run = datetime(2026, 10, 22, run_h, tzinfo=timezone.utc)
+        return {"snap": snap, "station_id": ST, "variable": "temperature_2m", "valid_time": snap + timedelta(hours=30),
+                "series": series, "value": 1.0, "run": run,
+                "avail": None if avail_h is None else datetime(2026, 10, 22, avail_h, tzinfo=timezone.utc)}
+
+    long = pl.DataFrame([
+        row("dwd_icon_d2", 6, 8),       # first seen 08:00 <= 12:00: kept (the table would also keep it)
+        row("ecmwf_ifs", 6, 9),         # measured 09:00 <= 12:00: kept, although run + 7 h = 13:00 would drop it
+        row("ecmwf_ifs", 6, 13),        # measured 13:00 > 12:00: dropped
+        row("ecmwf_ifs025", 6, None),   # no measurement: table 6 + 7 = 13:00 > 12:00: dropped
+        row("ai", 11, None),            # a product, never delayed
+    ], schema=ss.SCHEMA)
+    kept, dropped = ss.r1_filter(long)
+    assert sorted(kept["series"].to_list()) == ["ai", "dwd_icon_d2", "ecmwf_ifs"]
+    assert dropped == {"ecmwf_ifs": 1, "ecmwf_ifs025": 1}
