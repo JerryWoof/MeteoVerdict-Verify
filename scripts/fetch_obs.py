@@ -12,6 +12,10 @@ exactly as MeteoVerdict's own pipeline does (same cleaning, rule R5):
 * quality codes 0, 3, 5 are kept (1 suspect, 2 poor, 4 missing are dropped); values outside
   physically plausible limits are dropped.
 
+* ``cloud_cover`` (hourly element N, octas x 12.5 %, 8 and more = 100 %, at the full hour) and
+  ``sunshine_duration`` (SSV1H, tenths of the hour ending at the time, here seconds of that hour), from the
+  hourly files ``1h-<station>-<day>.json`` (days frozen before 23 Oct 2026 do not have these two columns);
+
 Output ``obs/obs-YYYYMMDD.csv`` (stations in the order of ``register/stations40.json``, hours
 00:00..23:00 UTC, an empty cell = no valid value) and its line in ``obs/SHA256SUMS``. A frozen day
 is never overwritten (the file's hash is what the scores cite). The day is **provisional** when it
@@ -38,7 +42,7 @@ BASE = "https://opendata.chmi.cz/meteorology/climate"
 ELEMENTS = {"T": "temperature_2m", "F": "wind_speed_10m", "SRA10M": "precipitation", "Fmax": "wind_gusts_10m"}
 KEEP_QUALITY = (0, 3, 5)
 PLAUSIBLE = {"temperature_2m": (-50, 50), "wind_speed_10m": (0, 75), "precipitation": (0, 120), "wind_gusts_10m": (0, 75)}
-VARIABLES = ("temperature_2m", "wind_speed_10m", "precipitation", "wind_gusts_10m")
+VARIABLES = ("temperature_2m", "wind_speed_10m", "precipitation", "wind_gusts_10m", "cloud_cover", "sunshine_duration")
 UTC = timezone.utc
 
 
@@ -68,6 +72,35 @@ def day_rows(wsi: str, day: date, today: date) -> tuple[list[list], str]:
         values = doc["data"]["data"]["values"]
         return [r for r in values if r[2].startswith(day.isoformat())], "recent"
     return [], "none"
+
+
+def day_rows_1h(wsi: str, day: date, today: date) -> list[list]:
+    """The hourly rows (elements N, SSV1H, ...) of ``day``: ``now/`` for the last days, else the monthly file."""
+    if (today - day).days <= 3:
+        doc = get_json(f"{BASE}/now/data/1h-{wsi}-{day:%Y%m%d}.json")
+        if doc:
+            return doc["data"]["data"]["values"]
+    doc = get_json(f"{BASE}/recent/data/1hour/{day.month:02d}/1h-{wsi}-{day:%Y%m}.json")
+    if doc:
+        return [r for r in doc["data"]["data"]["values"] if r[2].startswith(day.isoformat())]
+    return []
+
+
+def hourly_sky(rows: list[list], day: date) -> dict[datetime, dict[str, float]]:
+    """Cloud cover (%) and sunshine (s of the hour ending at the time) of ``day`` from hourly rows."""
+    out: dict[datetime, dict[str, float]] = {}
+    for _station, element, dt, val, _flag, quality in rows:
+        if element not in ("N", "SSV1H") or val in ("", None) or int(quality) not in KEEP_QUALITY:
+            continue
+        t = datetime.strptime(dt, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+        if t.date() != day:
+            continue
+        v = float(val)
+        if element == "N":
+            out.setdefault(t, {})["cloud_cover"] = 100.0 if v >= 8 else v * 12.5
+        else:
+            out.setdefault(t, {})["sunshine_duration"] = min(max(v / 10, 0.0), 1.0) * 3600
+    return out
 
 
 def hourly(rows: list[list], day: date) -> dict[datetime, dict[str, float]]:
@@ -102,7 +135,10 @@ def fetch_day(stations: list[str], day: date, today: date) -> tuple[dict[str, di
     def one(wsi: str):
         before, s1 = day_rows(wsi, day - timedelta(days=1), today)
         now, s2 = day_rows(wsi, day, today)
-        return wsi, hourly(before + now, day), s2
+        cells = hourly(before + now, day)
+        for t, extra in hourly_sky(day_rows_1h(wsi, day, today), day).items():
+            cells.setdefault(t, {}).update(extra)
+        return wsi, cells, s2
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = list(pool.map(one, stations))

@@ -25,8 +25,9 @@ What is computed (pre-registration rules R1-R5, ``preregistration/v1.md``):
   gusts as secondary, statistics only. Gusts are scored per part of the day (Prague night, morning,
   afternoon, evening; the largest gust of the part, as the AI is made): the models' value is the
   largest of their hourly gusts in the part (at least ``MIN_PART_MODEL`` hours with a value), the
-  measured one the largest of the part's hourly gusts (at least ``MIN_PART_OBS``). Cloud cover and
-  sunshine have no hourly ČHMÚ observation in the frozen files: not scored.
+  measured one the largest of the part's hourly gusts (at least ``MIN_PART_OBS``). Cloud cover (%) and
+  sunshine (s of the hour) are scored hourly like precipitation, where the frozen day has them
+  (``scripts/fetch_obs.py``, hourly elements N and SSV1H; days frozen earlier do not).
 * The chart window of lead k uses, for each hour, the snapshot 24k..24k+5 hours before it (one of
   the four daily snapshots); the statistics use all snapshots of the band.
 
@@ -57,11 +58,12 @@ UTC = timezone.utc
 PRIMARY = ("temperature_2m", "wind_speed_10m")
 #: gusts are scored per part of the day, with the value at the part's start as ``valid_time``
 PART_GUST = "wind_gusts_part"
-SECONDARY = ("precipitation", PART_GUST)
+SECONDARY = ("precipitation", "cloud_cover", "sunshine_duration", PART_GUST)
 VARIABLES = PRIMARY + SECONDARY
 #: the columns of the frozen observation files
-OBS_COLUMNS = ("temperature_2m", "wind_speed_10m", "precipitation", "wind_gusts_10m")
-UNITS = {"temperature_2m": "°C", "wind_speed_10m": "m/s", "precipitation": "mm", PART_GUST: "m/s"}
+OBS_COLUMNS = ("temperature_2m", "wind_speed_10m", "precipitation", "wind_gusts_10m", "cloud_cover", "sunshine_duration")
+UNITS = {"temperature_2m": "°C", "wind_speed_10m": "m/s", "precipitation": "mm", "cloud_cover": "%",
+         "sunshine_duration": "s", PART_GUST: "m/s"}  # fmt: skip
 PARTS = {"night": (0, 6), "morning": (6, 12), "afternoon": (12, 18), "evening": (18, 24)}
 PRAGUE = "Europe/Prague"
 MIN_PART_MODEL = 2
@@ -84,7 +86,7 @@ NAMES = {
     "ncep_aigfs025": "AIGFS", "gem_global": "GEM", "jma_gsm": "JMA GSM", "cma_grapes_global": "CMA GRAPES",
     "ukmo_global_deterministic_10km": "UKMO",
 }  # fmt: skip
-MODEL_VARS = ["temperature_2m", "precipitation", "wind_speed_10m"]
+MODEL_VARS = ["temperature_2m", "precipitation", "wind_speed_10m", "cloud_cover", "sunshine_duration"]
 SCHEMA = {"snap": pl.Datetime("us", "UTC"), "station_id": pl.String, "variable": pl.String,
           "valid_time": pl.Datetime("us", "UTC"), "series": pl.String, "value": pl.Float32,
           "run": pl.Datetime("us", "UTC")}  # fmt: skip
@@ -209,17 +211,19 @@ def load_snapshots(rows: list[dict], stations: list[str], snap_dir: Path | None,
 
 def load_obs(folder: Path) -> tuple[pl.DataFrame, list[str]]:
     files = sorted(folder.glob("obs-*.csv"))
-    frames = [pl.read_csv(f, schema_overrides={v: pl.Float64 for v in OBS_COLUMNS}) for f in files]
+    # days frozen before the cloud and sunshine columns existed simply lack them
+    frames = [pl.read_csv(f, schema_overrides={v: pl.Float64 for v in OBS_COLUMNS if v in f.read_text().split("\n", 1)[0]})
+              for f in files]  # fmt: skip
     if not frames:
         return pl.DataFrame(schema={"station_id": pl.String, "valid_time": pl.Datetime("us", "UTC"),
                                     "variable": pl.String, "obs": pl.Float64}), []  # fmt: skip
-    obs = (pl.concat(frames).unpivot(index=["station_id", "time"], variable_name="variable", value_name="obs")
+    obs = (pl.concat(frames, how="diagonal_relaxed").unpivot(index=["station_id", "time"], variable_name="variable", value_name="obs")
            .drop_nulls("obs")
            .select("station_id", pl.col("time").str.to_datetime("%Y-%m-%dT%H:%M:%SZ", time_zone="UTC")
                    .dt.cast_time_unit("us").alias("valid_time"), "variable", "obs"))  # fmt: skip
     gusts = hourly_gust_parts(obs.filter(pl.col("variable") == "wind_gusts_10m")
                               .select("station_id", "valid_time", pl.col("obs").alias("value")), ["station_id"], MIN_PART_OBS)
-    obs = pl.concat([obs.filter(pl.col("variable").is_in(PRIMARY + ("precipitation",))),
+    obs = pl.concat([obs.filter(pl.col("variable").is_in(PRIMARY + ("precipitation", "cloud_cover", "sunshine_duration"))),
                      gusts.select("station_id", "valid_time", pl.lit(PART_GUST).alias("variable"), pl.col("value").alias("obs"))])
     return obs, [f"{sha256_file(f)}  {f.name}" for f in files]
 
