@@ -87,6 +87,9 @@ def reduce_snapshot(tar_bytes: bytes, snap: datetime, stations: list[str]) -> pl
     the AI the issue time)."""
     with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as tar:
         members = {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
+    for base in ("stations", "stations_models"):  # policy public-v1: the files cut to the 40 stations
+        if f"{base}-public.parquet" in members:
+            members[f"{base}.parquet"] = members.pop(f"{base}-public.parquet")
     parts = []
     if "stations.parquet" in members:
         ai = pl.read_parquet(io.BytesIO(members["stations.parquet"]))

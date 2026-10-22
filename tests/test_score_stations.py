@@ -115,3 +115,16 @@ def test_hourly_from_ten_minute_rows():
     assert round(h[t3 + timedelta(hours=1)]["precipitation"], 1) == 0.6
     assert h[t3]["wind_gusts_10m"] == 3.0 + 5  # largest of 02:10 .. 03:00 is the 02:50 slot (5) -> 8.0
     assert round(h[datetime(2026, 10, 21, 0, tzinfo=UTC)]["precipitation"], 1) == 0.6  # slots of the day before count
+
+
+def test_public_v1_files_are_read(tmp_path):
+    data, _, _ = synthetic(tmp_path)
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        members = {m.name.replace(".parquet", "-public.parquet"): t.extractfile(m).read() for m in t.getmembers()}
+    renamed = io.BytesIO()
+    with tarfile.open(fileobj=renamed, mode="w") as t:
+        for name, b in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(b)
+            t.addfile(info, io.BytesIO(b))
+    assert ss.reduce_snapshot(renamed.getvalue(), SNAP, [ST]).equals(ss.reduce_snapshot(data, SNAP, [ST]))

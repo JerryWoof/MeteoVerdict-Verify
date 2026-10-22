@@ -8,7 +8,17 @@ What it checks, for every snapshot row of the ledger (``ledger/*.jsonl``):
    snapshot times only go forward. A changed, inserted or deleted row breaks the chain.
 2. with ``--download``: the release asset of each snapshot (a tar) is downloaded and its sha256
    equals the ledger's; ``manifest.json`` inside hashes to ``content_sha256``; every file inside
-   equals the hash in the ledger; the village register file in ``register/`` matches.
+   equals the hash in the ledger; the village register file in ``register/`` matches. Rows with
+   ``policy`` ``public-v1`` publish only the files in ``public``: the files in ``withheld``
+   (the villages, MeteoVerdict AI at the stations other than the ČHMÚ synoptic ones) are
+   committed by their sha256 in ``files`` and in ``manifest.json`` but not published (in
+   these rows ``manifest.json`` is a public one, listing the file hashes; the stored manifest,
+   with the village details, is withheld and committed by ``content_sha256``);
+   ``derived`` gives the hash and rule of a public file cut from a withheld one. Every committed
+   file is either public or withheld; ``public_stations`` (version, count, sha256 of the sorted
+   ids) matches the fixed list ``register/stations<N>.json`` of that version, and, if pyarrow
+   is installed, the public station files hold no other station. The village register is
+   withheld too (its hashes are in ``register``).
 3. with ``--remote``: GitHub's own digest of each release asset equals the ledger's.
 4. it lists the missing snapshots (the outage log): a snapshot time without an issue at most
    6 hours old is written as ``missing`` and counted, never filled in afterwards.
@@ -107,12 +117,33 @@ def check_asset(row: dict, repo: str, local_register: Path | None) -> list[str]:
     with tarfile.open(fileobj=io.BytesIO(data)) as tar:
         members = {m.name: tar.extractfile(m).read() for m in tar.getmembers() if m.isfile()}
     manifest = members.pop("manifest.json", None)
-    if manifest is None or sha256(manifest) != row["content_sha256"]:
+    if manifest is None:
+        problems.append(f"{t}: the tar has no manifest.json")
+    elif "public" not in row and sha256(manifest) != row["content_sha256"]:
+        # public-v1: manifest.json is the public one (file hashes, no village details); the
+        # stored manifest is withheld, committed by content_sha256
         problems.append(f"{t}: manifest.json does not hash to content_sha256")
-    if {n: sha256(b) for n, b in members.items()} != row["files"]:
+    if "public" in row:
+        # policy public-v1: the tar has the public files only; each hashes to the ledger
+        # (the store's hash, or ``derived`` for a file cut from a withheld one); the withheld
+        # files are committed by their hash in ``files`` and are not published
+        want = {n: row["files"].get(n) or (row.get("derived", {}).get(n) or {}).get("sha256") for n in row["public"]}
+        if {n: sha256(b) for n, b in members.items()} != want:
+            problems.append(f"{t}: public files in the tar differ from the hashes in the ledger")
+        if set(members) & set(row.get("withheld", [])):
+            problems.append(f"{t}: a withheld file is in the tar")
+        listed = json.loads(manifest)["files"] if manifest else {}
+        if {n: i["sha256"] for n, i in listed.items()} != row["files"]:
+            problems.append(f"{t}: manifest.json does not list the ledger's file hashes")
+        unaccounted = set(row["files"]) - set(row["public"]) - set(row.get("withheld", []))
+        if unaccounted:
+            problems.append(f"{t}: committed files neither public nor withheld: {sorted(unaccounted)}")
+        if row.get("public_stations"):
+            problems += check_public_stations(row, members, repo, local_register)
+    elif {n: sha256(b) for n, b in members.items()} != row["files"]:
         problems.append(f"{t}: files in the tar differ from the hashes in the ledger")
     reg = row.get("register")
-    if reg:
+    if reg and "public" not in row:  # before public-v1 the village register was published
         path = (local_register or Path("register")) / f"obce-{reg['version']}.parquet"
         try:
             blob = path.read_bytes() if path.exists() else fetch(
@@ -121,6 +152,44 @@ def check_asset(row: dict, repo: str, local_register: Path | None) -> list[str]:
                 problems.append(f"{t}: village register {reg['version']} differs from the ledger")
         except urllib.error.URLError:
             problems.append(f"{t}: village register {reg['version']} not found")
+    return problems
+
+
+def station_list(version: int, repo: str, local_register: Path | None) -> list[str] | None:
+    """The sorted ids of the fixed public station list ``version`` (``register/stations*.json``),
+    from this checkout or the repository's main branch; None if there is none."""
+    folder = local_register or Path("register")
+    docs = [json.loads(p.read_text()) for p in sorted(folder.glob("stations*.json"))] if folder.is_dir() else []
+    if not any(d.get("version") == version for d in docs):
+        try:
+            docs.append(json.loads(fetch(f"https://raw.githubusercontent.com/{repo}/main/register/stations40.json")))
+        except (urllib.error.URLError, ValueError):
+            pass
+    doc = next((d for d in docs if d.get("version") == version), None)
+    return sorted(s["id"] for s in doc["stations"]) if doc else None
+
+
+def check_public_stations(row: dict, members: dict, repo: str, local_register: Path | None) -> list[str]:
+    t, ref = row["snapshot_time"], row["public_stations"]
+    ids = station_list(ref["version"], repo, local_register)
+    if ids is None:
+        return [f"{t}: public station list version {ref['version']} not found in register/"]
+    problems = []
+    if sha256(canonical(ids)) != ref["sha256"] or len(ids) != ref["count"]:
+        problems.append(f"{t}: public_stations does not match the station list version {ref['version']}")
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:  # optional: the hashes above already fix the files
+        return problems
+    for name in row.get("derived", {}):
+        if name in members:
+            try:
+                found = set(pq.read_table(io.BytesIO(members[name]), columns=["station_id"]).column(0).to_pylist())
+            except Exception as error:  # noqa: BLE001
+                problems.append(f"{t}: {name} is not a readable Parquet file with station_id ({error})")
+                continue
+            if found - set(ids):
+                problems.append(f"{t}: {name} holds stations outside the public list: {sorted(found - set(ids))[:5]}")
     return problems
 
 
