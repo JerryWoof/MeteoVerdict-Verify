@@ -1,0 +1,40 @@
+name: obs
+# Freezes yesterday's hourly ČHMÚ observations of the 40 main stations as obs/obs-YYYYMMDD.csv
+# (scripts/fetch_obs.py, public ČHMÚ open data) and adds its line to obs/SHA256SUMS. A frozen day is
+# never overwritten. Runs at 02:20 and again at 05:20 UTC (if ČHMÚ published late); a day that is not
+# complete yet is skipped and retried by the next run.
+on:
+  schedule:
+    - cron: "20 2,5 * * *"
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "UTC day YYYY-MM-DD (default: yesterday)"
+        required: false
+permissions:
+  contents: write
+concurrency:
+  group: obs
+  cancel-in-progress: false
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Fetch and freeze the day
+        env:
+          DAY_IN: ${{ github.event.inputs.day }}
+        run: |
+          day="${DAY_IN:-$(date -u -d yesterday +%F)}"
+          python3 scripts/fetch_obs.py --day "$day" || [ $? -eq 2 ]
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add obs
+          if git diff --cached --quiet; then echo "nothing new"; exit 0; fi
+          git commit -q -m "obs: freeze $(git diff --cached --name-only | grep -o 'obs-[0-9]*' | head -1)"
+          for i in 1 2 3; do git pull --rebase -q origin main && git push -q origin HEAD:main && exit 0; sleep 5; done
+          exit 1
