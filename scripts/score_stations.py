@@ -13,7 +13,8 @@ What is computed (pre-registration rules R1-R5, ``preregistration/v1.md``):
 
 * Lead band D+k = ``valid_time - snapshot time`` in [24k, 24k+24) hours, k = 1..5.
 * Pairs: (snapshot, station, hour, variable) with an observation. A public model's value counts
-  only if its run was available at the snapshot time (R1: run start + the delay below <= snapshot
+  only if its run was available at the snapshot time (R1: the measured time the run was first seen
+  complete, ``release_inputs.parquet`` of the snapshot; without it run start + the delay below <= snapshot
   time); a value from an unavailable run is dropped, never replaced by an older run (R3).
 * Per station, variable and lead: the three public models with the lowest MAE against the AI's
   pairs (at least ``MIN_N`` pairs) are shown next to the AI; MAE, bias and RMSE of the AI and the
@@ -53,7 +54,7 @@ import polars as pl
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import verify_public as vp  # noqa: E402
 
-VERSION = "2"
+VERSION = "3"
 UTC = timezone.utc
 PRIMARY = ("temperature_2m", "wind_speed_10m")
 #: gusts are scored per part of the day, with the value at the part's start as ``valid_time``
@@ -89,7 +90,9 @@ NAMES = {
 MODEL_VARS = ["temperature_2m", "precipitation", "wind_speed_10m", "cloud_cover", "sunshine_duration"]
 SCHEMA = {"snap": pl.Datetime("us", "UTC"), "station_id": pl.String, "variable": pl.String,
           "valid_time": pl.Datetime("us", "UTC"), "series": pl.String, "value": pl.Float32,
-          "run": pl.Datetime("us", "UTC")}  # fmt: skip
+          "run": pl.Datetime("us", "UTC"), "avail": pl.Datetime("us", "UTC")}  # fmt: skip
+#: ``avail`` = when the run behind the value was first seen complete (the snapshot's
+#: ``release_inputs.parquet``); null where the log has no such time (R1 then uses ``DELAY_H``)
 
 
 def sha256_file(path: Path) -> str:
@@ -181,6 +184,14 @@ def reduce_snapshot(tar_bytes: bytes, snap: datetime, stations: list[str]) -> pl
         return pl.DataFrame(schema=SCHEMA)
     lead = (pl.col("valid_time") - pl.lit(snap)).dt.total_hours()
     out = pl.concat([p.cast({"run": pl.Datetime("us", "UTC"), "valid_time": pl.Datetime("us", "UTC")}) for p in parts])
+    if "release_inputs.parquet" in members:  # measured availability of the public models' runs (R1)
+        ri = (pl.read_parquet(io.BytesIO(members["release_inputs.parquet"]))
+              .filter(pl.col("available_at").is_not_null())
+              .select(pl.col("source").alias("series"), pl.col("run_time").alias("run"), pl.col("available_at").alias("avail"))
+              .cast({"run": pl.Datetime("us", "UTC"), "avail": pl.Datetime("us", "UTC")}).unique(["series", "run"]))  # fmt: skip
+        out = out.join(ri, on=["series", "run"], how="left")
+    else:
+        out = out.with_columns(pl.lit(None, pl.Datetime("us", "UTC")).alias("avail"))
     return (out.with_columns(pl.lit(snap).cast(pl.Datetime("us", "UTC")).alias("snap"))
             .filter(lead >= 24, lead < 24 * (LEADS[-1] + 1))
             .select(list(SCHEMA)).cast(SCHEMA))  # fmt: skip
@@ -285,9 +296,12 @@ def wide_pairs(long: pl.DataFrame) -> pl.DataFrame:
 
 def r1_filter(long: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, int]]:
     """Drop public-model values whose run was not yet available at the snapshot (R1); count them.
-    The AI and the blend are issued by the snapshot (the log only keeps issues up to it): no delay."""
+    The AI and the blend are issued by the snapshot (the log only keeps issues up to it): no delay.
+    Availability is the measured time the run was first seen complete (``avail``, from the
+    snapshot's ``release_inputs``); where the log has none, the conservative ``DELAY_H`` table."""
     delay = pl.col("series").replace_strict(DELAY_H, default=DEFAULT_DELAY_H, return_dtype=pl.Int64)
-    late = ~pl.col("series").is_in(list(PRODUCTS)) & (pl.col("run") + pl.duration(hours=delay) > pl.col("snap"))
+    available = pl.coalesce(pl.col("avail"), pl.col("run") + pl.duration(hours=delay))
+    late = ~pl.col("series").is_in(list(PRODUCTS)) & (available > pl.col("snap"))
     dropped = long.filter(late).group_by("series").len()
     return long.filter(~late), {r["series"]: r["len"] for r in dropped.iter_rows(named=True)}
 
