@@ -7,7 +7,7 @@ import io
 import json
 import sys
 import tarfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import polars as pl
@@ -128,3 +128,48 @@ def test_public_v1_files_are_read(tmp_path):
             info.size = len(b)
             t.addfile(info, io.BytesIO(b))
     assert ss.reduce_snapshot(renamed.getvalue(), SNAP, [ST]).equals(ss.reduce_snapshot(data, SNAP, [ST]))
+def station_table(hours, extra_gust=True):
+    """stations_models of the new layout: ai, blend and two models (A, B), temperature, rain, gusts."""
+    rows = []
+    for i, h in enumerate(hours):
+        rows.append(("ai", h, SNAP - timedelta(hours=1), 11.0, 1.0, None))
+        rows.append(("blend", h, SNAP - timedelta(hours=1), 10.5, 0.5, None))
+        rows.append(("model_a", h, SNAP - timedelta(hours=12), 12.0, 0.0, 6.0 + (i == 8) * 4))
+        rows.append(("model_b", h, SNAP - timedelta(hours=12), 7.0, 2.0, 5.0))
+    df = pl.DataFrame(rows, schema=["model", "valid_time", "run", "temperature_2m", "precipitation", "wind_gusts_10m"], orient="row")
+    return df.with_columns(pl.lit(ST).alias("station_id"), *[pl.col(c).cast(pl.Float32) for c in ("temperature_2m", "precipitation", "wind_gusts_10m")],
+                           *[pl.lit(None, pl.Float32).alias(c) for c in ("wind_speed_10m", "cloud_cover", "sunshine_duration")])
+
+
+def test_blend_and_new_ai_variables_on_common_pairs():
+    hours = [SNAP + timedelta(hours=24 + i) for i in range(30)]
+    sm = station_table(hours).filter(~((pl.col("model") == "blend") & (pl.col("valid_time") == hours[0])))  # blend missing at one hour
+    parts = pl.DataFrame({"station_id": [ST], "day": [date(2026, 10, 21)], "part": ["afternoon"], "gust": [9.0]}, schema_overrides={"gust": pl.Float32})
+    frame = ss.reduce_snapshot(tar_of({"stations_models.parquet": sm, "stations_parts.parquet": parts}), SNAP, [ST])
+    assert set(frame["series"]) == {"ai", "blend", "model_a", "model_b"}  # the AI comes from the table, no stations.parquet needed
+    assert {"temperature_2m", "precipitation", ss.PART_GUST} <= set(frame["variable"])
+    # models' gusts per part (Prague parts, hour-ending values); the spike is in the morning of 21 Oct
+    g = frame.filter(pl.col("variable") == ss.PART_GUST, pl.col("series") == "model_a")
+    assert g["value"].max() == 10.0 and set(g["valid_time"].dt.hour()) == {4, 10, 16, 22}  # part starts in UTC (summer time +2 h)
+    assert frame.filter(pl.col("variable") == ss.PART_GUST, pl.col("series") == "ai")["value"].to_list() == [9.0]
+    obs = pl.DataFrame({"station_id": [ST] * 30 * 2, "variable": ["temperature_2m"] * 30 + ["precipitation"] * 30,
+                        "valid_time": hours * 2, "obs": [10.0] * 30 + [0.2] * 30}).with_columns(pl.col("valid_time").dt.cast_time_unit("us"))
+    out = ss.score([frame], obs, [{"id": ST, "name": "Cheb"}], hours[-1])
+    t = out["overall"]["temperature_2m|1"]
+    assert t["ai_pairs"] == 24  # the pooled statistics need 30 pairs per model: no common set here
+    s = out["data"][f"{ST}|temperature_2m|1"]
+    assert s["with_blend"] and s["n"] == 23  # the hour without blend leaves the common set
+    assert [x["k"] for x in s["stats"]] == ["ai", "blend", "model_a", "model_b"]
+    assert [x["mae"] for x in s["stats"]] == [1.0, 0.5, 2.0, 3.0] and len(s["blend"]) == 48
+    assert t["blend"]["pairs"] == 23 and t["blend"]["mae"] == 0.5 and t["blend"]["ai_mae"] == 1.0
+    p = out["overall"]["precipitation|1"]
+    assert {m["k"]: m["mae"] for m in p["models"]} == {"model_a": 0.2, "model_b": 1.8} and p["blend"]["mae"] == 0.3
+    assert "wind_gusts_10m|1" not in out["overall"]
+
+
+def test_old_snapshot_without_blend_still_scores():
+    data, hours, _ = synthetic(Path("."))
+    frame = ss.reduce_snapshot(data, SNAP, [ST])
+    obs = pl.DataFrame({"station_id": [ST] * 30, "variable": ["temperature_2m"] * 30, "valid_time": hours, "obs": [10.0] * 30}).with_columns(pl.col("valid_time").dt.cast_time_unit("us"))
+    out = ss.score([frame], obs, [{"id": ST, "name": "Cheb"}], hours[-1])
+    assert out["overall"]["temperature_2m|1"]["blend"] is None and not out["overall"]["temperature_2m|1"]["with_blend"]
