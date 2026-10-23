@@ -1,0 +1,9 @@
+{
+  "note": "Releases taken down on purpose on 2026-10-23/24 because their tar published blend_weights.parquet (the weights of the blend, private since policy public-v2). Their ledger rows and hashes stay in the chain unchanged; the assets are no longer downloadable. The `stamps/` proofs of the chain still hold.",
+  "tags": {
+    "snap-20261023T0000Z": "published blend_weights.parquet",
+    "snap-20261023T0600Z": "published blend_weights.parquet",
+    "snap-20261023T1200Z": "published blend_weights.parquet",
+    "snap-20261023T1800Z": "published blend_weights.parquet"
+  }
+}

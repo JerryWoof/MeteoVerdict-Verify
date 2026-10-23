@@ -406,6 +406,11 @@ def main() -> int:
         ok = [r for r in ok if vp.parse_time(r["snapshot_time"]) > since]
     reg = json.loads(args.stations.read_text())
     stations = reg["stations"]
+    withdrawn = vp.read_withdrawn(args.ledger)
+    ok = [r for r in ok if r["asset"]["tag"] not in withdrawn]  # taken down on purpose, see withdrawn.json
+    if not ok:
+        print("no snapshot with a published asset yet; nothing to score")
+        return 0
     frames = load_snapshots(ok, [s["id"] for s in stations], args.snap_dir, args.cache, args.repo)
     obs, sums = load_obs(args.obs)
     result = score(frames, obs, stations, vp.parse_time(args.asof) if args.asof else None)

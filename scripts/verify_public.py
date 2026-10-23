@@ -9,7 +9,7 @@ What it checks, for every snapshot row of the ledger (``ledger/*.jsonl``):
 2. with ``--download``: the release asset of each snapshot (a tar) is downloaded and its sha256
    equals the ledger's; ``manifest.json`` inside hashes to ``content_sha256``; every file inside
    equals the hash in the ledger; the village register file in ``register/`` matches. Rows with
-   ``policy`` ``public-v1`` publish only the files in ``public``: the files in ``withheld``
+   ``policy`` ``public-v1`` and ``public-v2`` publish only the files in ``public``: the files in ``withheld``
    (the villages, MeteoVerdict AI at the stations other than the ČHMÚ synoptic ones) are
    committed by their sha256 in ``files`` and in ``manifest.json`` but not published (in
    these rows ``manifest.json`` is a public one, listing the file hashes; the stored manifest,
@@ -19,6 +19,11 @@ What it checks, for every snapshot row of the ledger (``ledger/*.jsonl``):
    ids) matches the fixed list ``register/stations<N>.json`` of that version, and, if pyarrow
    is installed, the public station files hold no other station. The village register is
    withheld too (its hashes are in ``register``).
+   ``public-v2`` (from 24 Oct 2026) is the same layout, but the weights of the blend
+   (``blend_weights.parquet``) are withheld too: only their hash is in the row. The checks are
+   generic (they follow the row's ``public`` and ``withheld`` lists), so both policies verify.
+   Releases listed in ``ledger/withdrawn.json`` were removed on purpose (the old ones held the
+   weights); their rows stay in the chain and are skipped here.
 3. with ``--remote``: GitHub's own digest of each release asset equals the ledger's.
 4. it lists the missing snapshots (the outage log): a snapshot time without an issue at most
    6 hours old is written as ``missing`` and counted, never filled in afterwards.
@@ -76,6 +81,14 @@ def read_ledger(folder: Path) -> list[dict]:
                 except ValueError as error:
                     raise SystemExit(f"FAIL {path.name}:{n} is not JSON: {error}") from None
     return rows
+
+
+def read_withdrawn(folder: Path) -> dict[str, str]:
+    """Release tags taken down on purpose (``<ledger>/withdrawn.json``: ``{"tags": {tag: reason}}``).
+    Their ledger rows and hashes stay (the chain is unchanged); the assets are gone, so they are
+    neither downloaded nor counted as missing."""
+    path = folder / "withdrawn.json"
+    return json.loads(path.read_text()).get("tags", {}) if path.exists() else {}
 
 
 def check_chain(rows: list[dict]) -> list[str]:
@@ -234,6 +247,12 @@ def main() -> int:
             if t.strftime("%Y-%m-%dT%H:%M:%SZ") not in seen:
                 problems.append(f"no row for the snapshot time {t:%Y-%m-%dT%H:%MZ}")
             t += timedelta(hours=6)
+    withdrawn = read_withdrawn(args.ledger)
+    gone = [r for r in ok if r["asset"]["tag"] in withdrawn]
+    if gone:
+        print(f"{len(gone)} snapshot assets withdrawn on purpose (rows and hashes kept, see {args.ledger}/withdrawn.json): "
+              + ", ".join(r["asset"]["tag"] for r in gone))
+    ok = [r for r in ok if r["asset"]["tag"] not in withdrawn]
     recent = ok
     if args.days:
         since = parse_time(rows[-1]["snapshot_time"]) - timedelta(days=args.days) if rows else None

@@ -126,3 +126,30 @@ def test_a_station_outside_the_list_in_the_public_file_is_a_problem(monkeypatch,
     reg = with_station_list(tmp_path, row)
     monkeypatch.setattr(vp, "fetch", lambda url, token=None: data)
     assert any("outside the public list" in p for p in vp.check_asset(row, "x/y", reg))
+
+
+def test_public_v2_withheld_weights_are_committed_by_hash(monkeypatch):
+    """public-v2: blend_weights.parquet is withheld (hash in the row, not in the tar)."""
+    row, data = row_and_asset()
+    row["policy"] = "public-v2"
+    row["files"]["blend_weights.parquet"] = h(b"weights")
+    row["withheld"].append("blend_weights.parquet")
+    # the public manifest lists every committed file, the tar has no weights
+    members = {"manifest.json": json.dumps({"files": {n: {"sha256": s} for n, s in row["files"].items()}}).encode(),
+               "okresy.parquet": b"okresy", "stations-public.parquet": station_file(IDS)}
+    data = tar(members)
+    row["asset"].update(sha256=h(data), bytes=len(data))
+    row["derived"]["stations-public.parquet"]["sha256"] = h(members["stations-public.parquet"])
+    monkeypatch.setattr(vp, "fetch", lambda url, token=None: data)
+    assert vp.check_asset(row, "x/y", None) == []
+    members["blend_weights.parquet"] = b"weights"
+    data = tar(members)
+    row["asset"].update(sha256=h(data), bytes=len(data))
+    monkeypatch.setattr(vp, "fetch", lambda url, token=None: data)
+    assert any("withheld" in p for p in vp.check_asset(row, "x/y", None))
+
+
+def test_withdrawn_tags_are_read(tmp_path):
+    assert vp.read_withdrawn(tmp_path) == {}
+    (tmp_path / "withdrawn.json").write_text(json.dumps({"tags": {"snap-x": "weights"}}))
+    assert vp.read_withdrawn(tmp_path) == {"snap-x": "weights"}
