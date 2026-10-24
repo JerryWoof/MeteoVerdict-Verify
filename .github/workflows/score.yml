@@ -1,5 +1,6 @@
 name: score
-# Recomputes derived/stations.json (the verification page's data) from the public material only:
+# Recomputes derived/stations.json (the verification page's data) and derived/explorer/ (the page's snapshot
+# explorer: every variable of every district and station of the newest snapshot) from the public material only:
 # ledger -> snapshot assets (sha256 checked against the ledger), frozen observations, station list.
 # Runs after every ledger push, after each daily observation freeze, daily, and on demand. The result
 # is force-pushed as ONE commit to the branch `derived` (history does not accumulate); anyone can
@@ -7,7 +8,7 @@ name: score
 on:
   push:
     branches: [main]
-    paths: ["ledger/**", "obs/**", "register/stations40.json", "scripts/score_stations.py", "scripts/verify_public.py", ".github/workflows/score.yml"]
+    paths: ["ledger/**", "obs/**", "register/stations40.json", "scripts/score_stations.py", "scripts/build_explorer.py", "scripts/verify_public.py", ".github/workflows/score.yml"]
   schedule:
     - cron: "50 5 * * *"
   workflow_dispatch:
@@ -43,6 +44,9 @@ jobs:
           python3 scripts/verify_public.py
           python3 scripts/score_stations.py --cache cache --out derived/stations.json
           ls -la derived
+      - name: Snapshot explorer data (newest snapshot, one JSON per district and station)
+        continue-on-error: true
+        run: python3 scripts/build_explorer.py --out derived/explorer
       - name: Publish to the branch derived (one commit, replaced every time)
         env:
           TOKEN: ${{ github.token }}
@@ -50,10 +54,11 @@ jobs:
           set -e
           pub=$(mktemp -d)
           cp derived/stations.json "$pub/"
+          if [ -f derived/explorer/index.json ]; then cp -r derived/explorer "$pub/explorer"; fi
           cd "$pub"
           git init -q -b derived
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add stations.json
-          git commit -q -m "derived/stations.json from main@${GITHUB_SHA::8}"
+          git add -A
+          git commit -q -m "derived/ from main@${GITHUB_SHA::8}"
           git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" derived
